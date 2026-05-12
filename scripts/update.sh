@@ -16,8 +16,8 @@ PACKAGE_NIX="${SCRIPT_DIR}/../package.nix"
 PLATFORMS=(
   "aarch64-apple-darwin"
   "x86_64-apple-darwin"
-  "x86_64-unknown-linux-gnu"
-  "aarch64-unknown-linux-gnu"
+  "x86_64-unknown-linux-musl"
+  "aarch64-unknown-linux-musl"
 )
 
 current_version() {
@@ -32,6 +32,18 @@ latest_version() {
       | grep '"tag_name"' \
       | sed 's/.*"rust-v\(.*\)".*/\1/'
   fi
+}
+
+archive_name() {
+  local platform="$1"
+  case "$platform" in
+    *-unknown-linux-musl)
+      printf 'codex-%s-bundle.tar.zst\n' "$platform"
+      ;;
+    *)
+      printf 'codex-%s.tar.gz\n' "$platform"
+      ;;
+  esac
 }
 
 # --- main ---
@@ -61,8 +73,9 @@ echo ""
 
 echo "Fetching SHA256 hashes..."
 for platform in "${PLATFORMS[@]}"; do
+  archive=$(archive_name "$platform")
   hash=$(nix-prefetch-url \
-    "https://github.com/${REPO}/releases/download/rust-v${NEW_VERSION}/codex-${platform}.tar.gz" \
+    "https://github.com/${REPO}/releases/download/rust-v${NEW_VERSION}/${archive}" \
     2>/dev/null | tail -1)
 
   echo "  ${platform}: ${hash}"

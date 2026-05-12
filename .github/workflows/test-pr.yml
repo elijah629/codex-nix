@@ -6,6 +6,7 @@ on:
       - "package.nix"
       - "flake.nix"
       - "flake.lock"
+      - "scripts/update.sh"
       - ".github/workflows/**"
 
 jobs:
