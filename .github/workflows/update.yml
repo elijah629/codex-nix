@@ -2,7 +2,7 @@ name: Check for Updates
 
 on:
   schedule:
-    - cron: "0 * * * *" # hourly
+    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       version:
@@ -17,7 +17,7 @@ jobs:
   check-update:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -65,7 +65,7 @@ jobs:
       - name: Create Pull Request
         if: steps.check.outputs.update_needed == 'true'
         id: create-pr
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@v8
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "update codex to ${{ steps.check.outputs.new_version }}"
