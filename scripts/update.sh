@@ -1,105 +1,121 @@
 #!/usr/bin/env bash
-#
-# Update codex to a new version.
-#
-# Usage:
-#   ./scripts/update.sh              # update to latest
-#   ./scripts/update.sh --check      # check for new version, don't update
-#   ./scripts/update.sh 0.105.0      # update to specific version
 
-set -euo pipefail
+set -Eeuo pipefail
 
-REPO="openai/codex"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PACKAGE_NIX="${SCRIPT_DIR}/../package.nix"
-
-PLATFORMS=(
-  "aarch64-apple-darwin"
-  "x86_64-apple-darwin"
-  "x86_64-unknown-linux-musl"
-  "aarch64-unknown-linux-musl"
+readonly REPO="openai/codex"
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly PACKAGE_NIX="${SCRIPT_DIR}/../package.nix"
+readonly PLATFORMS=(
+  aarch64-apple-darwin
+  x86_64-apple-darwin
+  x86_64-unknown-linux-musl
+  aarch64-unknown-linux-musl
 )
+WORK_DIR=""
+
+cleanup() {
+  if [[ -n "$WORK_DIR" && "$WORK_DIR" == "${TMPDIR:-/tmp}"/codex-update.* ]]; then
+    rm -rf -- "$WORK_DIR"
+  fi
+}
+trap cleanup EXIT
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/update.sh [--check | VERSION]
+
+With no argument, update to latest Codex release.
+EOF
+}
 
 current_version() {
-  grep 'version = "' "$PACKAGE_NIX" | head -1 | sed 's/.*"\(.*\)".*/\1/'
+  sed -n 's/^  version = "\([^"]*\)";.*/\1/p' "$PACKAGE_NIX"
 }
 
 latest_version() {
-  if command -v gh >/dev/null 2>&1; then
-    gh release view --repo "$REPO" --json tagName -q '.tagName' | sed 's/^rust-v//'
-  else
-    curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-      | grep '"tag_name"' \
-      | sed 's/.*"rust-v\(.*\)".*/\1/'
+  local url
+  if ! url=$(curl --fail --silent --show-error --location --head \
+    --output /dev/null --write-out '%{url_effective}' \
+    "https://github.com/${REPO}/releases/latest"); then
+    return 1
   fi
+  printf '%s\n' "${url##*/rust-v}"
 }
 
-archive_name() {
-  local platform="$1"
-  case "$platform" in
-    *-unknown-linux-musl)
-      printf 'codex-%s-bundle.tar.zst\n' "$platform"
+fail() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+main() {
+  local current target checksum_url checksums hashes_file output
+  current=$(current_version)
+  [[ -n "$current" ]] || fail "could not read current version from package.nix"
+
+  case "${1:-}" in
+    -h|--help)
+      usage
+      return
+      ;;
+    --check|'')
+      target=$(latest_version) || fail "could not determine latest release"
+      ;;
+    -* )
+      fail "unknown option: $1"
       ;;
     *)
-      printf 'codex-%s.tar.gz\n' "$platform"
+      [[ $# -eq 1 ]] || fail "expected one version argument"
+      target=$1
       ;;
   esac
+
+  printf 'Current: %s\nLatest:  %s\n' "$current" "$target"
+  [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] \
+    || fail "invalid version: $target"
+
+  if [[ "$current" == "$target" ]]; then
+    printf 'Already up to date.\n'
+    return
+  fi
+  if [[ "${1:-}" == "--check" ]]; then
+    return
+  fi
+
+  WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/codex-update.XXXXXX")
+  checksums="$WORK_DIR/SHA256SUMS"
+  hashes_file="$WORK_DIR/hashes"
+  output="$WORK_DIR/package.nix"
+  checksum_url="https://github.com/${REPO}/releases/download/rust-v${target}/codex-package_SHA256SUMS"
+
+  curl --fail --silent --show-error --location --retry 3 \
+    --output "$checksums" "$checksum_url"
+
+  local platform archive checksum hash
+  for platform in "${PLATFORMS[@]}"; do
+    archive="codex-package-${platform}.tar.gz"
+    checksum=$(awk -v archive="$archive" '$2 == archive { print $1 }' "$checksums")
+    [[ "$checksum" =~ ^[0-9a-f]{64}$ ]] \
+      || fail "missing checksum for $archive"
+    hash=$(nix hash convert --hash-algo sha256 --to sri "$checksum")
+    printf '%s %s\n' "$platform" "$hash" >> "$hashes_file"
+  done
+
+  awk -v version="$target" '
+    NR == FNR { hashes[$1] = $2; next }
+    /^  version = "/ { sub(/"[^"]+"/, "\"" version "\"") }
+    /^    "/ {
+      platform = $1
+      gsub(/"/, "", platform)
+      if (platform in hashes) {
+        sub(/= "[^"]*"/, "= \"" hashes[platform] "\"")
+      }
+    }
+    { print }
+  ' "$hashes_file" "$PACKAGE_NIX" > "$output"
+
+  mv "$output" "$PACKAGE_NIX"
+  chmod 0644 "$PACKAGE_NIX"
+  printf 'Updated package.nix to %s. Run: nix build\n' "$target"
 }
 
-# --- main ---
-
-CURRENT=$(current_version)
-echo "Current version: ${CURRENT}"
-
-if [[ "${1:-}" == "--check" ]] || [[ $# -eq 0 ]]; then
-  LATEST=$(latest_version)
-  echo "Latest version:  ${LATEST}"
-  if [[ "$CURRENT" == "$LATEST" ]]; then
-    echo "Already up to date."
-    exit 0
-  fi
-  echo ""
-  echo "Update available! Run:"
-  echo "  ./scripts/update.sh ${LATEST}"
-  [[ "${1:-}" == "--check" ]] && exit 0
-  # If called with no args, fall through to update
-  NEW_VERSION="$LATEST"
-else
-  NEW_VERSION="$1"
-fi
-
-echo "Updating to:     ${NEW_VERSION}"
-echo ""
-
-echo "Fetching SHA256 hashes..."
-for platform in "${PLATFORMS[@]}"; do
-  archive=$(archive_name "$platform")
-  hash=$(nix-prefetch-url \
-    "https://github.com/${REPO}/releases/download/rust-v${NEW_VERSION}/${archive}" \
-    2>/dev/null | tail -1)
-
-  echo "  ${platform}: ${hash}"
-
-  tmp=$(mktemp)
-  awk -v platform="$platform" -v hash="$hash" '
-    /hashes = \{/ { in_block=1 }
-    in_block && $0 ~ "\"" platform "\"" {
-      sub(/= "[^"]*"/, "= \"" hash "\"")
-    }
-    in_block && /\};/ { in_block=0 }
-    { print }
-  ' "$PACKAGE_NIX" > "$tmp"
-  mv "$tmp" "$PACKAGE_NIX"
-done
-
-tmp=$(mktemp)
-sed "s/version = \"${CURRENT}\"/version = \"${NEW_VERSION}\"/" "$PACKAGE_NIX" > "$tmp"
-mv "$tmp" "$PACKAGE_NIX"
-
-echo ""
-echo "Updated package.nix to v${NEW_VERSION}"
-echo ""
-echo "Next steps:"
-echo "  1. nix build              # verify it builds"
-echo "  2. ./result/bin/codex --version"
-echo "  3. git add package.nix && git commit -m \"update codex to ${NEW_VERSION}\""
+main "$@"

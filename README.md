@@ -57,13 +57,19 @@ nix profile install github:SecBear/codex-nix
 CI checks for new releases hourly. When a new version is detected,
 it fetches updated hashes for all platforms, opens a PR, and auto-merges once CI passes.
 
-To update manually:
+One command updates version plus all four platform hashes. It downloads upstream's
+small checksum manifest, not every platform archive, then changes `package.nix`
+only after all checks pass:
 
 ```bash
 ./scripts/update.sh          # update to latest
 ./scripts/update.sh --check  # check only
 ./scripts/update.sh 0.105.0  # specific version
 ```
+
+Linux builds add Nix's `bubblewrap` to Codex's `PATH`. Official full release
+packages also include `codex-code-mode-host`, bundled sandbox resources, `rg`,
+and `zsh`; these stay beside Codex in the Nix output.
 
 ## Related
 

@@ -34,7 +34,14 @@ jobs:
         run: ./result/bin/codex --version
 
       - name: Verify binary exists
-        run: test -f ./result/bin/codex
+        run: |
+          test -x ./result/bin/codex
+          test -x ./result/bin/codex-code-mode-host
+          test -x ./result/codex-path/rg
+          if [ "${{ runner.os }}" = Linux ]; then
+            test -x ./result/codex-resources/bwrap
+            grep -q '/bin/bwrap' ./result/bin/codex
+          fi
 
       - name: Test help
         run: ./result/bin/codex --help

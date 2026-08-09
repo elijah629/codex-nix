@@ -1,16 +1,13 @@
 {
   lib,
-  stdenv,
+  stdenvNoCC,
   fetchurl,
-  autoPatchelfHook,
-  zstd,
-  zlib,
-  libcap,
-  openssl,
+  makeWrapper,
+  bubblewrap,
 }:
 
 let
-  version = "0.146.1";
+  version = "0.147.0";
   repo = "openai/codex";
 
   platformMap = {
@@ -21,63 +18,45 @@ let
   };
 
   hashes = {
-    "x86_64-unknown-linux-musl" = "1cl9y0ig44fn1f9asmczxn89hsz8bil8drxd48zl4jqi8chma16c";
-    "aarch64-unknown-linux-musl" = "1x18ni3h540b7f7banv4hsmyyjrn2hbqfxi7s4332h7fqx0mbf1a";
-    "x86_64-apple-darwin" = "0l0z5x6kymgxcq6lkdawzp03ph2i6b033rflzqb5ynar4v16wpwp";
-    "aarch64-apple-darwin" = "088qg2yqsrwqph33298axfqn891cnr6q3mvaqibdajyjf2r5wz1k";
+    "x86_64-unknown-linux-musl" = "sha256-vXWNU9VuQdxl4EX0WJ33mgOO0ZegEa3LUqJY5q1kz9o=";
+    "aarch64-unknown-linux-musl" = "sha256-icv3m9Wub5xY2kfoB58xHIQhk1DJxDwHDULz6bKoFAE=";
+    "x86_64-apple-darwin" = "sha256-2R5ZEz2vkjvEXXbj2kr4rp72KgIx2hhIjaDNVztunWM=";
+    "aarch64-apple-darwin" = "sha256-F7KYTrIrYH49DCVyglL8kPUQ5Ha605ptn0XNsapoVDI=";
   };
 
-  platform = platformMap.${stdenv.hostPlatform.system}
-    or (throw "Unsupported system: ${stdenv.hostPlatform.system}");
-
-  isLinux = stdenv.hostPlatform.isLinux;
-  archive = if isLinux then
-    "codex-${platform}-bundle.tar.zst"
-  else
-    "codex-${platform}.tar.gz";
-  binary = if isLinux then "codex" else "codex-${platform}";
+  platform = platformMap.${stdenvNoCC.hostPlatform.system}
+    or (throw "Unsupported system: ${stdenvNoCC.hostPlatform.system}");
+  isLinux = stdenvNoCC.hostPlatform.isLinux;
 in
 
-stdenv.mkDerivation {
+stdenvNoCC.mkDerivation {
   pname = "codex";
   inherit version;
 
   src = fetchurl {
-    url = "https://github.com/${repo}/releases/download/rust-v${version}/${archive}";
-    sha256 = hashes.${platform};
+    url = "https://github.com/${repo}/releases/download/rust-v${version}/codex-package-${platform}.tar.gz";
+    hash = hashes.${platform};
   };
 
   sourceRoot = ".";
-
-  nativeBuildInputs = lib.optionals isLinux [
-    autoPatchelfHook
-    zstd
-  ];
-
-  buildInputs = lib.optionals isLinux [
-    stdenv.cc.cc.lib
-    zlib
-    libcap
-    openssl
-  ];
+  nativeBuildInputs = lib.optionals isLinux [ makeWrapper ];
 
   dontConfigure = true;
   dontBuild = true;
+  dontFixup = true;
 
   installPhase = ''
     runHook preInstall
 
-    mkdir -p $out/bin
-    cp ${binary} $out/bin/codex
-    chmod +x $out/bin/codex
-    if [ -d codex-resources ]; then
-      cp -r codex-resources $out/bin/
-    fi
+    mkdir -p "$out"
+    cp -R bin codex-package.json codex-path codex-resources "$out/"
+    ${lib.optionalString isLinux ''
+      wrapProgram "$out/bin/codex" \
+        --prefix PATH : ${lib.makeBinPath [ bubblewrap ]}
+    ''}
 
     runHook postInstall
   '';
-
-  dontFixup = !isLinux;
 
   meta = {
     description = "OpenAI Codex CLI — an AI coding agent for your terminal";
