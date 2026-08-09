@@ -16,9 +16,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
-      - uses: cachix/install-nix-action@v31
+      - uses: cachix/install-nix-action@v31.11.0
         with:
           nix_path: nixpkgs=channel:nixos-unstable
           extra_nix_config: |
@@ -40,7 +40,9 @@ jobs:
           test -x ./result/codex-path/rg
           if [ "${{ runner.os }}" = Linux ]; then
             test -x ./result/codex-resources/bwrap
-            grep -q '/bin/bwrap' ./result/bin/codex
+            BWRAP_DIR=$(grep -Eo "/nix/store/[a-z0-9]+-bubblewrap-[^/']+/bin" ./result/bin/codex | head -1)
+            test -x "$BWRAP_DIR/bwrap"
+            "$BWRAP_DIR/bwrap" --version
           fi
 
       - name: Test help
